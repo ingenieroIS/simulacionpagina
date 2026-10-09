@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detección de Enfermedades en Plantas - AI</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <header>
+        <img src="Imagenes/logo.jpg" alt="Logo Diagnóstico de Plantas" class="logo">
+        <h1>AgroScan AI</h1>
+        <p class="subtitle">Diagnóstico automático de enfermedades mediante Visión Artificial</p>
+    </header>
+
+    <main class="container">
+        <div class="upload-box" onclick="document.getElementById('fileInput').click()">
+            <div class="upload-icon">📷</div>
+            <div class="upload-text">
+                <strong> Click para subir foto</strong><br><small>(Formatos JPG,PNG)</small>
+            </div>
+        </div>
+
+        <input type="file" id="fileInput" accept="image/*" capture="environment">
+
+        <div class="preview-container" id="previewContainer">
+            <img id="previewImage" class="preview-img" alt="Foto de la hoja">
+        </div>
+
+        <button id="analyzeBtn" class="btn-analyze">Diagnosticar Hoja</button>
+
+        <div class="result-box" id="resultBox">
+            <div class="result-title" id="resultTitle">Resultado del análisis</div>
+            <div class="result-detail" id="resultDetail">Esperando imagen...</div>
+        </div>
+    </main>
+
+    <script src="env.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
