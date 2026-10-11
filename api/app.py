@@ -1,112 +1,33 @@
-
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import (
-    Conv2D, MaxPooling2D, GlobalAveragePooling2D,
-    Dense, Dropout, BatchNormalization, Activation, Input
-)
-from tensorflow.keras.regularizers import l2
-from tensorflow.keras.preprocessing.image import img_to_array
-from PIL import Image
-import numpy as np
-import io
-import zipfile
-import os
-import tempfile
 from fastapi.middleware.cors import CORSMiddleware
-
-
-MODEL_PATH = "modelo.keras"          
-IMG_SIZE = (224, 224)
-L2 = 0.0002
-
-CLASS_NAMES = [
-    "Anthracnose",
-    "Bacterial Blight",
-    "Black Spot",
-    "Citrus Canker",
-    "Citrus Mite",
-    "Curl Leaf",
-    "Curl Virus",
-    "Deficiency Leaf",
-    "Dry leaf",
-    "Greening",
-    "Healthy",
-    "Melanose",
-    "Sooty Mould",
-    "Spider Mite"
-]
-
-# Arquitectura de la red
-def build_model():
-    model = Sequential([
-        Input(shape=(224, 224, 3)),
-
-        Conv2D(64, (3, 3), padding="same", kernel_regularizer=l2(L2)),
-        BatchNormalization(),
-        Activation("relu"),
-        MaxPooling2D((2, 2)),
-
-        Conv2D(128, (3, 3), padding="same", kernel_regularizer=l2(L2)),
-        BatchNormalization(),
-        Activation("relu"),
-        MaxPooling2D((2, 2)),
-
-        Conv2D(256, (3, 3), padding="same", kernel_regularizer=l2(L2)),
-        BatchNormalization(),
-        Activation("relu"),
-        MaxPooling2D((2, 2)),
-
-        Conv2D(512, (3, 3), padding="same", kernel_regularizer=l2(L2)),
-        BatchNormalization(),
-        Activation("relu"),
-        MaxPooling2D((2, 2)),
-
-        Dropout(0.4),
-        GlobalAveragePooling2D(),
-
-        Dense(512, kernel_regularizer=l2(L2)),
-        Activation("relu"),
-        Dropout(0.5),
-
-        Dense(14, activation="softmax")
-    ])
-    return model
+import tensorflow as tf
+import numpy as np
+import cv2
+import json
 
 # ------------------------------------------------------------------
-# Cargar pesos desde el archivo .keras (es un zip)
+# Cargar modelo y mapeo de clases
 # ------------------------------------------------------------------
-print("Construyendo arquitectura...")
-model = build_model()
+#MODEL_PATH = "mejor_modelo_hojas.keras"
+MODEL_PATH = "modelo.keras"
+CLASS_MAP_PATH = "class_indices.json"
 
-print("Extrayendo pesos del .keras...")
-with tempfile.TemporaryDirectory() as tmpdir:
-    with zipfile.ZipFile(MODEL_PATH, "r") as z:
-        # Buscar el archivo de pesos dentro del .keras
-        weight_files = [f for f in z.namelist() if "weights" in f.lower() or f.endswith(".h5") or f.endswith(".weights.h5")]
-        if not weight_files:
-            # Listar contenido para depuración
-            print("Contenido del .keras:", z.namelist())
-            raise RuntimeError("No se encontraron pesos dentro del archivo .keras")
-        
-        weight_file = weight_files[0]
-        print(f"Archivo de pesos encontrado: {weight_file}")
-        z.extract(weight_file, tmpdir)
-        weights_path = os.path.join(tmpdir, weight_file)
-        
-        model.load_weights(weights_path)
+model = tf.keras.models.load_model(MODEL_PATH)
 
-print("Modelo cargado correctamente.")
+with open(CLASS_MAP_PATH) as f:
+    class_map = {int(k): v for k, v in json.load(f).items()}
 
-
+# ------------------------------------------------------------------
+# App FastAPI
+# ------------------------------------------------------------------
 app = FastAPI(
-    title="API Citrus Leaf Pathology",
-    description="Clasificación de enfermedades de hojas de cítricos",
+    title="API Diagnóstico de Hojas de Limón",
+    description="Clasificación de enfermedades en hojas de limón",
     version="1.0"
 )
 
-
+# CORS (útil si vas a consumir la API desde frontend)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -114,52 +35,67 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-def preprocess_image(image_bytes: bytes) -> np.ndarray:
-    try:
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        img = img.resize(IMG_SIZE, Image.LANCZOS)
-        img_array = img_to_array(img)
-        img_array = img_array / 255.0
-        img_array = np.expand_dims(img_array, axis=0)
-        return img_array
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error al procesar la imagen: {str(e)}")
-
+# ------------------------------------------------------------------
+# Endpoints
+# ------------------------------------------------------------------
 @app.get("/")
 def root():
     return {
-        "mensaje": "API de clasificación de hojas de cítricos activa",
-        "clases": CLASS_NAMES,
+        "mensaje": "API de diagnóstico de hojas de limón activa",
+        "clases": list(class_map.values()),
         "endpoint_prediccion": "/predict"
     }
 
-@app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="El archivo debe ser una imagen")
-
-    image_bytes = await file.read()
-    img_array = preprocess_image(image_bytes)
-
-    predictions = model.predict(img_array, verbose=0)[0]
-    predicted_idx = int(np.argmax(predictions))
-    confidence = float(predictions[predicted_idx])
-
-    top3_idx = predictions.argsort()[-3:][::-1]
-    top3 = [
-        {"clase": CLASS_NAMES[i], "confianza": float(predictions[i])}
-        for i in top3_idx
-    ]
-
-    return JSONResponse({
-        "prediccion": CLASS_NAMES[predicted_idx],
-        "confianza": confidence,
-        "top_3": top3
-    })
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    # Validar que sea una imagen
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="El archivo debe ser una imagen")
+
+    try:
+        # Leer imagen
+        contents = await file.read()
+        npimg = np.frombuffer(contents, np.uint8)
+        img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+
+        if img is None:
+            raise HTTPException(status_code=400, detail="Imagen inválida")
+
+        # Preprocesamiento (igual que en tu código Flask)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img_resized = cv2.resize(img_rgb, (224, 224)).astype(np.float32) / 255.0
+        img_batch = np.expand_dims(img_resized, axis=0)
+
+        # Predicción
+        pred = model.predict(img_batch, verbose=0)[0]
+        idx = int(np.argmax(pred))
+        confianza = round(float(pred[idx] * 100), 2)
+        clase = class_map[idx]
+
+        # Top 3 (opcional, pero útil)
+        top3_idx = pred.argsort()[-3:][::-1]
+        top3 = [
+            {
+                "clase": class_map[i],
+                "confianza_porcentaje": round(float(pred[i] * 100), 2)
+            }
+            for i in top3_idx
+        ]           
+
+        return JSONResponse({
+            "prediccion": clase,
+            "confianza": round(float(pred[idx]), 4), 
+            "indice": idx,
+            "top_3": top3
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al procesar la imagen: {str(e)}")
