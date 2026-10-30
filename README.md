@@ -8,3 +8,7 @@ Si no funciona revisar el app.js y cambiar la direccion de la api
 
 ### Correr el backend 
 revisar en la carpeta api readme.md
+### Instalar tuberias para conectar con hugging face
+```
+pip install transformers torch
+```
