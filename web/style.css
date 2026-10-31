@@ -10,7 +10,7 @@
     box-sizing: border-box;
     margin: 0;
     padding: 0;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
 }
 
 body {
@@ -46,6 +46,15 @@ p.subtitle {
     color: #666;
     font-size: 0.95rem;
 }
+/* Contenedor principal adaptable en columnas */
+.main-layout {
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+    width: 100%;
+    max-width: 900px;
+    justify-content: center;
+}
 
 .container {
     background: var(--card-bg);
@@ -60,10 +69,12 @@ p.subtitle {
 .upload-box {
     border: 2px dashed #a5d6a7;
     border-radius: 8px;
-    padding: 30px 15px;
+    padding: 25px 15px;
     background-color: #f1f8e9;
     cursor: pointer;
-    transition: background-color 0.2s, border-color 0.2s;
+    transition:
+        background-color 0.2s,
+        border-color 0.2s;
     margin-bottom: 20px;
 }
 
@@ -73,13 +84,13 @@ p.subtitle {
 }
 
 .upload-icon {
-    font-size: 40px;
+    font-size: 35px;
     color: var(--primary-color);
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 
 .upload-text {
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     color: #444;
 }
 
@@ -122,15 +133,27 @@ p.subtitle {
     background-color: #a5d6a7;
     cursor: not-allowed;
 }
+/* Panel lateral para la respuesta del LLM y Feedback RL */
+.llm-panel {
+    background: var(--card-bg);
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    width: 100%;
+    max-width: 440px;
+    padding: 25px;
+    text-align: left;
+    display: none; /* Se muestra al obtener resultados */
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
 
 .result-box {
-    margin-top: 20px;
+    margin-top: 15px;
     padding: 15px;
     border-radius: 6px;
     background-color: #e8f5e9;
     border-left: 5px solid var(--primary-color);
-    display: none;
-    text-align: left;
 }
 
 .result-box.error {
@@ -139,10 +162,10 @@ p.subtitle {
 }
 
 .result-title {
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     font-weight: bold;
     color: var(--primary-color);
-    margin-bottom: 5px;
+    margin-bottom: 8px;
 }
 
 .result-box.error .result-title {
@@ -150,6 +173,66 @@ p.subtitle {
 }
 
 .result-detail {
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     color: #333;
+    line-height: 1.4;
+}
+/* Estilos para el bloque del LLM y RL */
+.llm-recommendation-box {
+    background-color: #f9fbe7;
+    border: 1px solid #cddc39;
+    border-radius: 8px;
+    padding: 15px;
+    margin-top: 10px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: #2c3e50;
+    max-height: 250px;
+    overflow-y: auto;
+}
+.rl-feedback-container {
+    margin-top: 15px;
+    padding-top: 12px;
+    border-top: 1px solid #eee;
+    text-align: center;
+}
+
+.rl-feedback-container p {
+    font-size: 0.85rem;
+    color: #555;
+    margin-bottom: 8px;
+}
+
+.stars {
+    display: flex;
+    justify-content: center;
+    gap: 5px;
+    cursor: pointer;
+    font-size: 1.5rem;
+}
+
+.star {
+    color: #ccc;
+    transition: color 0.2s;
+}
+
+.star.selected,
+.star:hover {
+    color: #f39c12;
+}
+
+#feedbackMsg {
+    font-size: 0.8rem;
+    color: var(--primary-color);
+    margin-top: 5px;
+    font-weight: bold;
+    display: none;
+}
+
+/* Responsivo para celulares */
+@media (max-width: 768px) {
+    .main-layout {
+        flex-direction: column;
+        align-items: center;
+    }
 }
