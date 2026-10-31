@@ -35,6 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------- LLM ----------
 print("Cargando modelo LLM (Qwen)...")
 pipe = pipeline("text-generation", model="Qwen/Qwen2.5-1.5B-Instruct")
 print("LLM cargado correctamente.")
@@ -47,31 +48,33 @@ def generar_recomendacion_llm(enfermedad_predicha: str) -> str:
         f"tratamiento y prevención para esta enfermedad. La explicación debe ser clara, "
         f"profesional y tener una extensión mayor a 200 caracteres."
     )
-
     messages = [
         {"role": "system", "content": "Eres un asistente experto en agricultura y salud vegetal."},
         {"role": "user", "content": prompt},
     ]
-
-    output = pipe(messages, max_new_tokens=300, do_sample=True, temperature=0.7)
+    # do_sample=False → determinista (permite cachear y evita inventos)
+    output = pipe(messages, max_new_tokens=300, do_sample=False)
     generated = output[0]["generated_text"]
 
-    # La pipeline puede devolver lista de mensajes (chat) o un string
     if isinstance(generated, list):
         for msg in reversed(generated):
             if isinstance(msg, dict) and msg.get("role") == "assistant":
                 return msg.get("content", "").strip()
-        # Fallback: último dict con contenido
         last = generated[-1]
         return (last.get("content", "") if isinstance(last, dict) else str(last)).strip()
 
     return str(generated).strip()
 
 
-async def generar_recomendacion_llm_async(enfermedad_predicha: str) -> str:
-    """Ejecuta la pipeline bloqueante en un hilo para no congelar uvicorn."""
-    return await asyncio.to_thread(generar_recomendacion_llm, enfermedad_predicha)
+# Candado: solo 1 generación simultánea (Qwen es pesado en CPU)
+_llm_lock = asyncio.Semaphore(1)
 
+async def generar_recomendacion_llm_async(enfermedad_predicha: str) -> str:
+    async with _llm_lock:
+        return await asyncio.to_thread(generar_recomendacion_llm, enfermedad_predicha)
+
+
+# ---------- BD feedback RL ----------
 def init_db():
     conn = sqlite3.connect("rl_feedback.db")
     cursor = conn.cursor()
@@ -93,16 +96,13 @@ init_db()
 class FeedbackRequest(BaseModel):
     enfermedad: str
     recomendacion: str
-    rating: int  # Escala de 1 a 5
+    rating: int
 
 @app.post("/api/feedback")
 def guardar_feedback_rl(data: FeedbackRequest):
     if not (1 <= data.rating <= 5):
         raise HTTPException(status_code=400, detail="El rating debe ser entre 1 y 5")
-    
-    # Recompensa para Aprendizaje por Refuerzo (RL) mapeada a [-1.0, 1.0]
-    reward = (data.rating - 3) / 2.0 
-    
+    reward = (data.rating - 3) / 2.0
     conn = sqlite3.connect("rl_feedback.db")
     cursor = conn.cursor()
     cursor.execute(
@@ -113,51 +113,33 @@ def guardar_feedback_rl(data: FeedbackRequest):
     conn.close()
     return {"status": "success", "reward_calculado": reward}
 
+
+# ---------- CNN ----------
 MODEL_PATH = "modelo.keras"
 IMG_SIZE = (224, 224)
 L2 = 0.0002
 
 CLASS_NAMES = [
-    "Anthracnose",
-    "Bacterial Blight",
-    "Black Spot",
-    "Citrus Canker",
-    "Citrus Mite",
-    "Curl Leaf",
-    "Curl Virus",
-    "Deficiency Leaf",
-    "Dry leaf",
-    "Greening",
-    "Healthy",
-    "Melanose",
-    "Sooty Mould",
-    "Spider Mite"
-]
-
+    "Anthracnose", "Bacterial Blight", "Black Spot", "Citrus Canker",
+    "Citrus Mite", "Curl Leaf", "Curl Virus", "Deficiency Leaf",
+    "Dry leaf", "Greening", "Healthy", "Melanose", "Sooty Mould", "Spider Mite",
+]  # 14
 
 def build_model() -> Sequential:
     return Sequential([
         Input(shape=(224, 224, 3)),
 
         Conv2D(64, (3, 3), padding="same", kernel_regularizer=l2(L2)),
-        BatchNormalization(),
-        Activation("relu"),
-        MaxPooling2D((2, 2)),
+        BatchNormalization(), Activation("relu"), MaxPooling2D((2, 2)),
 
         Conv2D(128, (3, 3), padding="same", kernel_regularizer=l2(L2)),
-        BatchNormalization(),
-        Activation("relu"),
-        MaxPooling2D((2, 2)),
+        BatchNormalization(), Activation("relu"), MaxPooling2D((2, 2)),
 
         Conv2D(256, (3, 3), padding="same", kernel_regularizer=l2(L2)),
-        BatchNormalization(),
-        Activation("relu"),
-        MaxPooling2D((2, 2)),
+        BatchNormalization(), Activation("relu"), MaxPooling2D((2, 2)),
 
         Conv2D(512, (3, 3), padding="same", kernel_regularizer=l2(L2)),
-        BatchNormalization(),
-        Activation("relu"),
-        MaxPooling2D((2, 2)),
+        BatchNormalization(), Activation("relu"), MaxPooling2D((2, 2)),
 
         Dropout(0.4),
         GlobalAveragePooling2D(),
@@ -168,7 +150,6 @@ def build_model() -> Sequential:
 
         Dense(14, activation="softmax"),
     ])
-
 
 print("Construyendo arquitectura...")
 model = build_model()
@@ -186,9 +167,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         weight_file = weight_files[0]
         print(f"Archivo de pesos encontrado: {weight_file}")
         z.extract(weight_file, tmpdir)
-        weights_path = os.path.join(tmpdir, weight_file)
-        
-        model.load_weights(weights_path)
+        model.load_weights(os.path.join(tmpdir, weight_file))
 
 print("Modelo cargado correctamente.")
 
@@ -197,14 +176,13 @@ def preprocess_image(image_bytes: bytes) -> np.ndarray:
     try:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         img = img.resize(IMG_SIZE, Image.LANCZOS)
-        img_array = img_to_array(img)
-        img_array = img_array / 255.0
-        img_array = np.expand_dims(img_array, axis=0)
-        return img_array
+        img_array = img_to_array(img) / 255.0
+        return np.expand_dims(img_array, axis=0)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error al procesar la imagen: {e}")
 
 
+# ---------- Endpoints ----------
 @app.get("/", response_class=HTMLResponse)
 async def root():
     with open("index.html", "r", encoding="utf-8") as f:
@@ -213,6 +191,7 @@ async def root():
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
+    """SOLO clasifica (rápido, ~1 s). No llama al LLM."""
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="El archivo debe ser una imagen")
 
@@ -220,29 +199,47 @@ async def predict(file: UploadFile = File(...)):
     img_array = preprocess_image(image_bytes)
 
     predictions = model.predict(img_array, verbose=0)[0]
-    predicted_idx = int(np.argmax(predictions))
-    confidence = float(predictions[predicted_idx])
-    enfermedad = CLASS_NAMES[predicted_idx]
-
+    idx = int(np.argmax(predictions))
     top3_idx = predictions.argsort()[-3:][::-1]
-    top3 = [
-        {"clase": CLASS_NAMES[i], "confianza": float(predictions[i])}
-        for i in top3_idx
-    ]
-
-    # 👇 Aquí se conecta CNN -> LLM
-    try:
-        recomendacion = await generar_recomendacion_llm_async(enfermedad)
-    except Exception as e:
-        recomendacion = f"No se pudo generar la recomendación: {e}"
+    top3 = [{"clase": CLASS_NAMES[i], "confianza": float(predictions[i])} for i in top3_idx]
 
     return JSONResponse({
-        "prediccion": enfermedad,
-        "confianza": confidence,
+        "prediccion": CLASS_NAMES[idx],
+        "confianza": float(predictions[idx]),
         "top_3": top3,
-        "recomendacion": recomendacion,
-        "longitud_caracteres": len(recomendacion),
     })
+
+
+class RecommendationRequest(BaseModel):
+    enfermedad: str
+
+_reco_cache: dict[str, str] = {}
+
+@app.post("/recommendation")
+async def recommendation(data: RecommendationRequest):
+    """Genera recomendación con el LLM (lento, cacheada por enfermedad)."""
+    if data.enfermedad not in CLASS_NAMES:
+        raise HTTPException(status_code=400, detail="Enfermedad no válida")
+
+    if data.enfermedad in _reco_cache:
+        return {
+            "enfermedad": data.enfermedad,
+            "recomendacion": _reco_cache[data.enfermedad],
+            "cached": True,
+        }
+
+    try:
+        reco = await generar_recomendacion_llm_async(data.enfermedad)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM falló: {e}")
+
+    _reco_cache[data.enfermedad] = reco
+    return {
+        "enfermedad": data.enfermedad,
+        "recomendacion": reco,
+        "cached": False,
+    }
+
 
 @app.get("/health")
 def health():
